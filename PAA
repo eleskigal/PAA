@@ -1,0 +1,161 @@
+import requests
+import os
+import urllib3
+import openpyxl
+from openpyxl import load_workbook
+from openpyxl import Workbook
+from openpyxl.utils import range_boundaries
+from io import BytesIO
+from datetime import date
+import pyautogui
+import time
+import schedule
+
+# Constants
+SAVE_PATH = r"D:\Julián\Prueba"
+FILE_NAME = "Febrero"
+URL = 'https://community.secop.gov.co/Public/Areas/Archive/RetrieveFile.aspx?key=237947FA915FF03D883C94B92B62351A2E779C3DB4925BCBCFC80A0BF3CAD0E1&filename=QWRxdWlzaWNpb25lc1BBQV8yNTU0NDVfMV83N2E2YWVmYi0wY2I3LTRjOTgtOTI3NC01NWNmNWUxNWYyMTIueGxzeA==&storage=Public'
+
+def download_file(url, save_path, file_name):
+    """
+    Downloads a file from a URL and saves it to the specified path.
+    """
+    response = requests.get(url, verify=False)
+    response.raise_for_status()
+
+    os.makedirs(save_path, exist_ok=True)
+    file_path = os.path.join(save_path, file_name)
+
+    with open(file_path, 'wb') as f:
+        f.write(response.content)
+
+    return file_path
+
+
+def open_workbook(file_path):
+    """
+    Opens an Excel workbook from a file path and returns the workbook object.
+    """
+    with open(file_path, 'rb') as f:
+        file_contents = BytesIO(f.read())
+        return load_workbook(filename=file_contents)
+
+
+def save_workbook(wb, file_path):
+    """
+    Saves an Excel workbook object to the specified file path and returns the modified file path.
+    """
+    xlsx_file_path = os.path.splitext(file_path)[0] + '_modificado.xlsx'
+    wb.save(xlsx_file_path)
+    wb.close()
+
+    os.remove(file_path)
+
+    return xlsx_file_path
+
+
+def copy_rows_to_new_workbook(wb):
+    """
+    Copies rows from the active worksheet in the specified workbook to a new workbook and returns the new workbook object.
+    """
+    new_wb = Workbook()
+    new_ws = new_wb.active
+
+    # Get the active worksheet
+    ws = wb.active
+
+    # Get the merged cells
+    merged_cells = ws.merged_cells.ranges
+
+    # Remove A1 from the merged cells
+    for merged_cell in merged_cells:
+        min_row, min_col, max_row, max_col = merged_cell.min_row, merged_cell.min_col, merged_cell.max_row, merged_cell.max_col
+        if min_row == 1 and min_col == 1:
+            ws.unmerge_cells(str(merged_cell))
+            break
+
+    # Delete the first row
+    ws.delete_rows(1, 1)
+
+    # Add a new column at the beginning of the active sheet
+    ws.insert_cols(1)
+
+    # Add the current date to the first cell of the new column
+    today = date.today().strftime("%d/%m/%Y")
+    ws.cell(row=2, column=1, value=today)
+
+    # Write the download date to cells A2 to A961
+    for row in range(2, 962):
+        ws.cell(row=row, column=1, value=today)
+
+    # Update the value of cell A1 to "FPUBLICACION"
+    ws['A1'] = 'FPUBLICACION'
+
+    # Copy rows to new workbook
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True):
+        new_ws.append(row)
+
+    return new_wb
+
+
+def create_table(ws):
+    """
+    Creates an Excel table object in the specified worksheet and returns the modified worksheet object.
+    """
+    # Get the maximum column and row numbers in the worksheet
+    max_row = ws.max_row
+    max_col = ws.max_column
+
+    # Define the range of the data to be converted into a table
+    table_range = f"A1:{chr(ord('A') + max_col - 1)}{max_row}"
+
+    # Create a Table object and assign the data range to it
+    table = openpyxl.worksheet.table.Table(ref=table_range, displayName="Tabla1")
+
+    # Add the table to the worksheet
+    ws.add_table(table)
+
+    # Auto-fit the column widths to fit the table data
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2) * 1.2
+        ws.column_dimensions[column].width = adjusted_width
+
+
+def scrape_and_save():
+    """
+    Downloads an Excel file from a URL, manipulates the data, saves the modified data to a new file, and deletes the original file.
+    """
+    file_path = download_file(URL, SAVE_PATH, FILE_NAME)
+    wb = open_workbook(file_path)
+    new_wb = copy_rows_to_new_workbook(wb)
+    ws = new_wb.active
+    create_table(ws)
+    save_workbook(new_wb, file_path)
+
+    print(f"File saved to {file_path}")
+
+
+def main():
+    """
+    Main function that runs the scraping task repeatedly at a set interval of time.
+    """
+    scrape_and_save()
+
+    # Schedule the task to run every 50 seconds
+    schedule.every(50).seconds.do(scrape_and_save)
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    main()
